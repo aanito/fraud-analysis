@@ -1,0 +1,5 @@
+#hide large files sizes from pushing
+data
+
+outputs
+fraud_env
