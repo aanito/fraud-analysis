@@ -1,56 +1,80 @@
-import shap
-import lime
-import lime.lime_tabular
-import numpy as np
 import pandas as pd
+import numpy as np
+import shap
 import joblib
-import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
+import argparse
+import os
 
-# Load dataset (assuming preprocessed dataset is available)
-data = pd.read_csv('processed_fraud_data.csv')  # Adjust path as needed
+def get_args():
+    parser = argparse.ArgumentParser(description="Evaluate Model and Explain Predictions with SHAP")
+    parser.add_argument("--model_path", required=True, help="Path to trained model file (fraud_detection_model.pkl)")
+    parser.add_argument("--data_path", required=True, help="Path to feature-engineered fraud dataset")
+    return parser.parse_args()
 
-# Separate features and target
-X = data.drop(columns=['class'])
-y = data['class']
+def load_and_preprocess_data(data_path):
+    """
+    Load dataset and ensure all features match training format.
+    """
+    data = pd.read_csv(data_path)
 
-# Split data
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # Drop non-numeric columns
+    non_numeric_cols = data.select_dtypes(exclude=[np.number]).columns.tolist()
+    if non_numeric_cols:
+        print(f"Dropping non-numeric columns: {non_numeric_cols}")
+        data = data.drop(columns=non_numeric_cols)
 
-# Load trained model
-model = joblib.load('trained_fraud_model.pkl')  # Adjust model path
+    # Convert datetime columns to timestamps
+    for col in ["signup_time", "purchase_time"]:
+        if col in data.columns:
+            data[col] = pd.to_datetime(data[col], errors="coerce").astype(int) // 10**9
 
-# SHAP Explainability
-explainer = shap.Explainer(model, X_train)
-shap_values = explainer(X_test)
+    # Fill missing values
+    if data.isnull().sum().sum() > 0:
+        print("Filling missing values with column medians.")
+        data = data.fillna(data.median())
 
-# SHAP Summary Plot
-plt.figure(figsize=(10, 6))
-shap.summary_plot(shap_values, X_test)
-plt.savefig('outputs/shap_summary_plot.png')
+    return data
 
-# SHAP Force Plot (Example for first instance)
-shap.initjs()
-shap.force_plot(explainer.expected_value, shap_values[0].values, X_test.iloc[0])
-plt.savefig('outputs/shap_force_plot.png')
+def main():
+    args = get_args()
 
-# SHAP Dependence Plot
-shap.dependence_plot('purchase_value', shap_values, X_test)
-plt.savefig('outputs/shap_dependence_plot.png')
+    # Load model
+    if not os.path.exists(args.model_path):
+        raise FileNotFoundError(f"Model file not found: {args.model_path}")
+    
+    model = joblib.load(args.model_path)
 
-# LIME Explainability
-explainer_lime = lime.lime_tabular.LimeTabularExplainer(
-    X_train.values,
-    feature_names=X_train.columns.tolist(),
-    class_names=['Not Fraud', 'Fraud'],
-    mode='classification'
-)
+    # Load and preprocess dataset
+    data = load_and_preprocess_data(args.data_path)
 
-# Explain a single prediction
-idx = 0  # Adjust index as needed
-exp = explainer_lime.explain_instance(X_test.iloc[idx].values, model.predict_proba)
-exp.save_to_file('outputs/lime_explanation.html')
+    # Separate features and target
+    if "class" in data.columns:
+        X = data.drop(columns=["class"])
+    else:
+        X = data
 
-print("SHAP and LIME explainability reports generated successfully.")
+    # Ensure SHAP data matches training features
+    model_features = model.feature_names_in_ if hasattr(model, "feature_names_in_") else X.columns.tolist()
+    X = X[model_features]
+
+    # Convert all features to float
+    X = X.astype(np.float64)
+
+    print(f"SHAP input shape: {X.shape}, Model input shape: {len(model_features)} features.")
+
+    # Initialize SHAP explainer
+    explainer = shap.Explainer(model, X)
+
+    # Compute SHAP values (disable additivity check)
+    shap_values = explainer(X, check_additivity=False)
+
+    # Save SHAP values
+    shap_output_path = os.path.join(os.path.dirname(args.model_path), "shap_values.pkl")
+    joblib.dump(shap_values, shap_output_path)
+    print(f"SHAP values saved at {shap_output_path}")
+
+    # Visualize SHAP summary plot
+    shap.summary_plot(shap_values, X)
+
+if __name__ == "__main__":
+    main()

@@ -40,6 +40,7 @@ def main():
 
     # Convert data types where necessary
     fraud_data["signup_time"] = pd.to_datetime(fraud_data["signup_time"], errors='coerce')
+    
     fraud_data["purchase_time"] = pd.to_datetime(fraud_data["purchase_time"], errors='coerce')
     fraud_data["ip_address"] = fraud_data["ip_address"].astype(float).astype(int)  # Convert IP to integer
 
